@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  username  String?  @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  habits    Habit[]
+  feedback  Feedback[]
+  
+  @@map("users")
+}
+
+model Habit {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  color       String   @default("#3B82F6")
+  reminder    DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  entries     HabitEntry[]
+  
+  @@map("habits")
+}
+
+model HabitEntry {
+  id        String   @id @default(cuid())
+  date      DateTime @default(now())
+  completed Boolean  @default(false)
+  notes     String?
+  createdAt DateTime @default(now())
+
+  habitId   String
+  habit     Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  
+  @@unique([habitId, date])
+  @@map("habit_entries")
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  date      DateTime @default(now())
+  content   String
+  mood      Int?     // 1-5 scale
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, date])
+  @@map("feedback")
+}
