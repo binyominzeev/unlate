@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Unlate</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* small local tweaks */
+    .cell-editable:focus { outline: 2px solid #60A5FA; outline-offset: 2px; }
+    .time-badge { min-width: 5rem; }
+    .time-input { min-width: 6rem; width: 6rem; }
+    
+    /* Blink effect for updates */
+    @keyframes blink-update {
+      0% { background-color: #fef3c7; }
+      50% { background-color: #fbbf24; }
+      100% { background-color: #fef3c7; }
+    }
+    .updated {
+      animation: blink-update 0.6s ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+  <div class="max-w-5xl mx-auto p-6">
+    <header class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold">Unlate — Schedule Editor (Client-side MVP)</h1>
+        <p class="text-sm text-slate-500 mt-1">Create flexible daily flows, edit activity durations, compute times. Save to cookie or export/import JSON.</p>
+      </div>
+      <div class="space-x-2">
+        <button id="undoBtn" class="px-3 py-1 bg-purple-600 text-white rounded shadow">↶ Undo</button>
+        <button id="exportBtn" class="px-3 py-1 bg-sky-600 text-white rounded shadow">Export JSON</button>
+        <button id="importBtn" class="px-3 py-1 bg-emerald-600 text-white rounded shadow">Import JSON</button>
+        <button id="saveCookieBtn" class="px-3 py-1 bg-yellow-500 text-slate-800 rounded shadow">Save to Cookie</button>
+        <button id="loadCookieBtn" class="px-3 py-1 bg-white border text-slate-700 rounded shadow">Load from Cookie</button>
+      </div>
+    </header>
+
+    <main class="bg-white p-6 rounded shadow">
+      <section>
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-xl font-medium">Schedules</h2>
+          <div class="flex gap-2 items-center">
+            <input id="newSchedName" class="border p-2 rounded" placeholder="New schedule name" />
+            <button id="addScheduleBtn" class="px-4 py-2 bg-sky-600 text-white rounded">Add Schedule</button>
+          </div>
+        </div>
+
+        <div id="schedulesList" class="space-y-6">
+          <!-- schedules rendered here -->
+        </div>
+      </section>
+    </main>
+
+    <template id="scheduleCardTpl">
+      <div class="p-3 border rounded">
+        <div class="flex items-start justify-between">
+          <div>
+            <h3 class="text-lg font-medium name"></h3>
+            <div class="text-xs text-slate-500 mt-1 meta"></div>
+          </div>
+          <div class="space-x-1">
+            <button class="selectBtn px-2 py-1 bg-sky-500 text-white rounded text-sm">Select</button>
+            <button class="delBtn px-2 py-1 bg-red-500 text-white rounded text-sm">Delete</button>
+          </div>
+        </div>
+        <div class="mt-3 steps"></div>
+      </div>
+    </template>
+
+    <template id="stepTpl">
+      <div class="flex items-center gap-4 border-b py-3 hover:bg-slate-50">
+        <input class="w-28 px-2 py-2 border rounded cell-editable time-input startTime text-center" type="time" />
+        <input class="flex-1 px-3 py-2 border rounded cell-editable label" />
+        <input class="w-24 px-2 py-2 border rounded cell-editable duration text-center" type="number" />
+        <input class="w-28 px-2 py-2 border rounded cell-editable time-input endTime text-center" type="time" />
+        <div class="flex gap-2">
+          <button class="upBtn px-3 py-2 bg-slate-100 hover:bg-slate-200 border rounded">↑</button>
+          <button class="downBtn px-3 py-2 bg-slate-100 hover:bg-slate-200 border rounded">↓</button>
+          <button class="delStepBtn px-3 py-2 bg-red-100 hover:bg-red-200 text-red-600 rounded">✕</button>
+        </div>
+      </div>
+    </template>
+
+    <div class="mt-6 text-slate-500 text-sm">
+      Tip: Click on start times, durations, or end times to edit them. Changes will automatically adjust the rest of the schedule.
+    </div>
+  </div>
+
+<script>
+// Simple client-side schedule editor
+(function(){
+  // Data model: schedules = [{id, name, anchorMode, anchorTime, steps:[{label,duration,startTime}] }]
+  const state = {
+    schedules: [],
+    selectedId: null,
+    undoStack: []
+  };
+
+  // Helpers
+  const q = sel => document.querySelector(sel);
+  const id = () => Math.random().toString(36).slice(2,9);
+
+  // Cookie helpers
+  function saveCookie(key, value, days=365){
+    try {
+      const v = encodeURIComponent(JSON.stringify(value));
+      const d = new Date(); d.setTime(d.getTime() + (days*24*60*60*1000));
+      document.cookie = key + "=" + v + "; expires=" + d.toUTCString() + "; path=/";
+      console.log('Saved to cookie:', key, value.length, 'schedules');
+    } catch(e) {
+      console.log('Error saving cookie:', e);
+    }
+  }
+  function loadCookie(key){
+    try {
+      const cookies = document.cookie.split(';').map(c=>c.trim());
+      for(const c of cookies){
+        if(c.startsWith(key+'=')) {
+          const value = c.substring(key.length+1);
+          if(value) {
+            return JSON.parse(decodeURIComponent(value));
+          }
+        }
+      }
+    } catch(e) {
+      console.log('Error loading cookie:', e);
+    }
+    return null;
+  }
+
+  function saveLocal(){ 
+    saveCookie('unlate_schedules', state.schedules, 365);
+  }
+  function loadLocal(){ 
+    let data = loadCookie('unlate_schedules');
+    if(!data) {
+      // Fallback to export cookie
+      data = loadCookie('unlate_export');
+    }
+    if(data && Array.isArray(data)) {
+      state.schedules = data;
+      console.log('Loaded', data.length, 'schedules from cookies');
+    } else {
+      console.log('No valid schedules found in cookies');
+    }
+  }
+
+  // Time helpers
+  function toMinutes(timeStr){ 
+    if(!timeStr) return 0;
+    const [hh,mm] = timeStr.split(':').map(Number); 
+    return hh*60 + mm; 
+  }
+  function toTimeStr(minutes){ 
+    minutes = ((minutes%1440)+1440)%1440; 
+    const hh = Math.floor(minutes/60).toString().padStart(2,'0'); 
+    const mm = (minutes%60).toString().padStart(2,'0'); 
+    return hh+':'+mm; 
+  }
+
+  // Helper function to add blink effect
+  function blinkElement(element) {
+    element.classList.add('updated');
+    setTimeout(() => element.classList.remove('updated'), 600);
+  }
+
+  // Schedule adjustment functions
+  function adjustScheduleFromStartTime(schedule, stepIndex, newStartTime) {
+    const step = schedule.steps[stepIndex];
+    const oldStartMinutes = toMinutes(step.startTime || '00:00');
+    const newStartMinutes = toMinutes(newStartTime);
+    const diff = newStartMinutes - oldStartMinutes;
+
+    // Update this step's start time
+    step.startTime = newStartTime;
+
+    // Shift ALL other steps by the same time difference
+    for(let i = 0; i < schedule.steps.length; i++) {
+      if(i !== stepIndex) {
+        const currentStart = toMinutes(schedule.steps[i].startTime || '00:00');
+        schedule.steps[i].startTime = toTimeStr(currentStart + diff);
+      }
+    }
+  }
+
+  function adjustScheduleFromDuration(schedule, stepIndex, newDuration) {
+    const step = schedule.steps[stepIndex];
+    const oldDuration = step.duration || 0;
+    const diff = newDuration - oldDuration;
+
+    // Update this step's duration
+    step.duration = newDuration;
+
+    // Shift all subsequent steps by the duration difference
+    for(let i = stepIndex + 1; i < schedule.steps.length; i++) {
+      const currentStart = toMinutes(schedule.steps[i].startTime || '00:00');
+      schedule.steps[i].startTime = toTimeStr(currentStart + diff);
+    }
+  }
+
+  function adjustScheduleFromEndTime(schedule, stepIndex, newEndTime) {
+    const step = schedule.steps[stepIndex];
+    const startMinutes = toMinutes(step.startTime || '00:00');
+    const newEndMinutes = toMinutes(newEndTime);
+    const newDuration = newEndMinutes - startMinutes;
+
+    if(newDuration > 0) {
+      const oldDuration = step.duration || 0;
+      const durationDiff = newDuration - oldDuration;
+      
+      // Update this step's duration
+      step.duration = newDuration;
+
+      // Shift all subsequent steps by the duration difference
+      for(let i = stepIndex + 1; i < schedule.steps.length; i++) {
+        const currentStart = toMinutes(schedule.steps[i].startTime || '00:00');
+        schedule.steps[i].startTime = toTimeStr(currentStart + durationDiff);
+      }
+    }
+  }
+
+  function computeInitialTimes(schedule) {
+    const mode = schedule.anchorMode || 'forward';
+    const anchor = schedule.anchorTime;
+
+    if(!anchor) return;
+
+    if(mode === 'backward') {
+      // Start from end and work backwards
+      let currentEnd = toMinutes(anchor);
+      for(let i = schedule.steps.length - 1; i >= 0; i--) {
+        const duration = schedule.steps[i].duration || 0;
+        const startTime = currentEnd - duration;
+        schedule.steps[i].startTime = toTimeStr(startTime);
+        currentEnd = startTime;
+      }
+    } else {
+      // Start from beginning and work forwards
+      let currentStart = toMinutes(anchor);
+      for(let i = 0; i < schedule.steps.length; i++) {
+        schedule.steps[i].startTime = toTimeStr(currentStart);
+        const duration = schedule.steps[i].duration || 0;
+        currentStart += duration;
+      }
+    }
+  }
+
+  // Render
+  function render(){
+    const container = q('#schedulesList'); container.innerHTML='';
+    state.schedules.forEach(sch => {
+      const tpl = q('#scheduleCardTpl').content.cloneNode(true);
+      tpl.querySelector('.name').textContent = sch.name;
+      tpl.querySelector('.meta').textContent = `steps: ${sch.steps.length} • anchor: ${sch.anchorMode||'forward'}`;
+      const selectBtn = tpl.querySelector('.selectBtn');
+      const delBtn = tpl.querySelector('.delBtn');
+      selectBtn.onclick = ()=>{ state.selectedId = sch.id; renderSelected(); };
+      delBtn.onclick = ()=>{ 
+        if(confirm('Delete schedule?')){ 
+          saveUndoState(); // Save state before change
+          state.schedules = state.schedules.filter(x=>x.id!==sch.id); 
+          if(state.selectedId===sch.id) state.selectedId=null; 
+          saveLocal(); 
+          render(); 
+        } 
+      };
+      
+      // steps preview (compact)
+      const stepsEl = tpl.querySelector('.steps');
+      sch.steps.forEach(st=>{
+        const el = document.createElement('div');
+        el.className = 'text-sm text-slate-600 py-0.5';
+        const startTime = st.startTime || '--:--';
+        const endTime = st.startTime ? toTimeStr(toMinutes(st.startTime) + (st.duration || 0)) : '--:--';
+        el.textContent = `${startTime} ${st.label} (${st.duration || 0}m) → ${endTime}`;
+        stepsEl.appendChild(el);
+      });
+      container.appendChild(tpl);
+    });
+    renderSelected();
+  }
+
+  function renderSelected(){
+    const sel = state.schedules.find(s=>s.id===state.selectedId);
+    if(!sel){ return; }
+
+    // render steps list in schedule card area
+    const card = document.createElement('div');
+    card.className='mt-6 bg-slate-50 p-4 rounded-lg';
+
+    // Add controls at top
+    const controls = document.createElement('div'); 
+    controls.className='mb-4 p-4 bg-white rounded border flex flex-wrap gap-4 items-end';
+    controls.innerHTML = `
+      <div class="flex-1">
+        <label class="block text-sm font-medium mb-1">Anchor Mode</label>
+        <select class="anchorMode w-full border p-2 rounded">
+          <option value="forward">Forward from start time</option>
+          <option value="backward">Backward from end time</option>
+        </select>
+      </div>
+      <div class="flex-1">
+        <label class="block text-sm font-medium mb-1">Anchor Time</label>
+        <input class="anchorTime w-full border p-2 rounded" type="time" />
+      </div>
+      <div class="flex-1">
+        <label class="block text-sm font-medium mb-1">Default Duration (min)</label>
+        <input class="defaultDuration w-full border p-2 rounded" type="number" min="1" value="10" />
+      </div>
+      <div class="flex gap-2">
+        <button class="computeBtn px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Compute Times</button>
+        <button class="addActivityBtn px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Add Activity</button>
+      </div>
+    `;
+    card.appendChild(controls);
+
+    // Set control values and attach event handlers
+    const anchorModeEl = controls.querySelector('.anchorMode');
+    const anchorTimeEl = controls.querySelector('.anchorTime');
+    const defaultDurationEl = controls.querySelector('.defaultDuration');
+    const computeBtn = controls.querySelector('.computeBtn');
+    const addActivityBtn = controls.querySelector('.addActivityBtn');
+
+    anchorModeEl.value = sel.anchorMode || 'forward';
+    anchorTimeEl.value = sel.anchorTime || '';
+    defaultDurationEl.value = sel.defaultDuration || 10;
+
+    // Event handlers for controls
+    computeBtn.onclick = () => {
+      saveUndoState(); // Save state before change
+      sel.anchorMode = anchorModeEl.value;
+      sel.anchorTime = anchorTimeEl.value;
+      sel.defaultDuration = Number(defaultDurationEl.value || 10);
+      computeInitialTimes(sel);
+      saveLocal();
+      render();
+    };
+
+    addActivityBtn.onclick = () => {
+      saveUndoState(); // Save state before change
+      const dur = Number(defaultDurationEl.value || 10);
+      
+      // Calculate start time for new activity
+      let startTime = '';
+      if(sel.steps.length > 0) {
+        const lastStep = sel.steps[sel.steps.length - 1];
+        if(lastStep.startTime && lastStep.duration) {
+          const lastEndMinutes = toMinutes(lastStep.startTime) + lastStep.duration;
+          startTime = toTimeStr(lastEndMinutes);
+        }
+      } else if(sel.anchorTime && sel.anchorMode === 'forward') {
+        startTime = sel.anchorTime;
+      }
+
+      sel.steps.push({label:'New activity', duration:dur, startTime});
+      saveLocal();
+      render();
+    };
+
+    // Add header row
+    const header = document.createElement('div');
+    header.className = 'flex items-center gap-4 font-medium text-sm text-slate-700 pb-3 border-b-2 border-slate-300';
+    header.innerHTML = `
+      <div class="w-28 text-center">Start Time</div>
+      <div class="flex-1 px-3">Activity</div>
+      <div class="w-24 text-center">Duration (min)</div>
+      <div class="w-28 text-center">End Time</div>
+      <div class="w-32 text-center">Actions</div>
+    `;
+    card.appendChild(header);
+
+    const stepsContainer = document.createElement('div');
+    stepsContainer.className = 'bg-white rounded border';
+    sel.steps.forEach((st, idx)=>{
+      const tpl = q('#stepTpl').content.cloneNode(true);
+      const startTimeIn = tpl.querySelector('.startTime');
+      const labelIn = tpl.querySelector('.label');
+      const durIn = tpl.querySelector('.duration');
+      const endTimeIn = tpl.querySelector('.endTime');
+
+      // Set values
+      startTimeIn.value = st.startTime || '';
+      labelIn.value = st.label;
+      durIn.value = st.duration || 0;
+      
+      // Calculate and set end time
+      if(st.startTime && st.duration) {
+        const endMinutes = toMinutes(st.startTime) + (st.duration || 0);
+        endTimeIn.value = toTimeStr(endMinutes);
+      }
+
+      // Event handlers
+      // Update the event handlers to save undo state before changes around line 330:
+      // Event handlers - only trigger on blur or Enter key
+      const handleStartTimeChange = () => {
+        saveUndoState();
+        adjustScheduleFromStartTime(sel, idx, startTimeIn.value);
+        saveLocal();
+        renderSelected();
+        setTimeout(() => {
+          document.querySelectorAll('.startTime, .endTime').forEach((el, i) => {
+            if(i !== idx) blinkElement(el);
+          });
+        }, 10);
+      };
+
+      const handleDurationChange = () => {
+        saveUndoState();
+        const newDuration = Number(durIn.value || 0);
+        adjustScheduleFromDuration(sel, idx, newDuration);
+        saveLocal();
+        renderSelected();
+        setTimeout(() => {
+          document.querySelectorAll('.startTime, .endTime').forEach((el, i) => {
+            if(i > idx) blinkElement(el);
+          });
+          const currentEndTime = document.querySelectorAll('.endTime')[idx];
+          if(currentEndTime) blinkElement(currentEndTime);
+        }, 10);
+      };
+
+      const handleEndTimeChange = () => {
+        saveUndoState();
+        adjustScheduleFromEndTime(sel, idx, endTimeIn.value);
+        saveLocal();
+        renderSelected();
+        setTimeout(() => {
+          document.querySelectorAll('.startTime, .endTime').forEach((el, i) => {
+            if(i > idx) blinkElement(el);
+          });
+        }, 10);
+      };
+
+      const handleLabelChange = () => {
+        saveUndoState();
+        st.label = labelIn.value;
+        saveLocal();
+        render();
+      };
+
+      // Attach blur and keydown events
+      startTimeIn.addEventListener('blur', handleStartTimeChange);
+      startTimeIn.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter') {
+          e.target.blur(); // This will trigger the blur event
+        }
+      });
+
+      durIn.addEventListener('blur', handleDurationChange);
+      durIn.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter') {
+          e.target.blur();
+        }
+      });
+
+      endTimeIn.addEventListener('blur', handleEndTimeChange);
+      endTimeIn.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter') {
+          e.target.blur();
+        }
+      });
+
+      labelIn.addEventListener('blur', handleLabelChange);
+      labelIn.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter') {
+          e.target.blur();
+        }
+      });
+
+      tpl.querySelector('.delStepBtn').onclick = () => {
+        saveUndoState(); // Save state before change
+        sel.steps.splice(idx, 1);
+        saveLocal();
+        render();
+      };
+
+      tpl.querySelector('.upBtn').onclick = () => {
+        if(idx > 0) {
+          saveUndoState(); // Save state before change
+          [sel.steps[idx-1], sel.steps[idx]] = [sel.steps[idx], sel.steps[idx-1]];
+          saveLocal();
+          render();
+        }
+      };
+
+      tpl.querySelector('.downBtn').onclick = () => {
+        if(idx < sel.steps.length - 1) {
+          saveUndoState(); // Save state before change
+          [sel.steps[idx], sel.steps[idx+1]] = [sel.steps[idx+1], sel.steps[idx]];
+          saveLocal();
+          render();
+        }
+      };
+
+      stepsContainer.appendChild(tpl);
+    });
+
+    card.appendChild(stepsContainer);
+
+    // add controls at bottom
+    const bottomControls = document.createElement('div'); 
+    bottomControls.className='mt-4 flex gap-2';
+    const renameBtn = document.createElement('button'); 
+    renameBtn.textContent='Rename Schedule'; 
+    renameBtn.className='px-4 py-2 bg-white border rounded hover:bg-slate-50';
+    renameBtn.onclick = ()=>{ 
+      const n = prompt('New name', sel.name); 
+      if(n && n !== sel.name){ 
+        saveUndoState(); // Save state before change
+        sel.name = n; 
+        saveLocal(); 
+        render(); 
+      }
+    };
+    bottomControls.appendChild(renameBtn);
+    card.appendChild(bottomControls);
+
+    // attach card under schedules list area
+    const schedulesList = q('#schedulesList');
+    // remove existing detailed view
+    const existing = document.querySelector('.detailedView'); if(existing) existing.remove();
+    const detailed = document.createElement('div'); 
+    detailed.className='detailedView';
+    detailed.appendChild(card);
+    schedulesList.appendChild(detailed);
+  }
+
+  // Add undo functionality
+  function saveUndoState() {
+    // Deep clone current state for undo
+    const undoState = {
+      schedules: JSON.parse(JSON.stringify(state.schedules)),
+      selectedId: state.selectedId
+    };
+    state.undoStack.push(undoState);
+    // Keep only last 10 undo states
+    if(state.undoStack.length > 10) {
+      state.undoStack.shift();
+    }
+  }
+
+  function undo() {
+    if(state.undoStack.length > 0) {
+      const undoState = state.undoStack.pop();
+      state.schedules = undoState.schedules;
+      state.selectedId = undoState.selectedId;
+      saveLocal();
+      render();
+      return true;
+    }
+    return false;
+  }
+
+  // Actions
+  q('#undoBtn').onclick = () => {
+    if(!undo()) {
+      alert('Nothing to undo');
+    }
+  };
+
+  q('#addScheduleBtn').onclick = ()=>{
+    saveUndoState(); // Save state before change
+    const name = q('#newSchedName').value.trim() || 'Untitled';
+    const s = { id:id(), name, anchorMode:'forward', anchorTime:'', defaultDuration:10, steps:[] };
+    state.schedules.push(s); state.selectedId = s.id; saveLocal(); render(); q('#newSchedName').value='';
+  };
+
+  q('#saveCookieBtn').onclick = ()=>{
+    saveCookie('unlate_export', state.schedules, 365);
+    alert('Saved schedules to cookie (unlate_export)');
+  };
+  q('#loadCookieBtn').onclick = ()=>{
+    const data = loadCookie('unlate_export'); if(data){ state.schedules = data; saveLocal(); render(); alert('Loaded from cookie'); } else alert('No cookie found');
+  };
+
+  q('#exportBtn').onclick = ()=>{
+    const data = JSON.stringify(state.schedules, null, 2);
+    const blob = new Blob([data], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'unlate_schedules.json'; a.click(); URL.revokeObjectURL(url);
+  };
+
+  q('#importBtn').onclick = ()=>{
+    const inp = document.createElement('input'); inp.type='file'; inp.accept='application/json';
+    inp.onchange = ()=>{
+      const f = inp.files[0]; const reader = new FileReader();
+      reader.onload = ()=>{ try{ const data = JSON.parse(reader.result); if(Array.isArray(data)){ state.schedules = data; saveLocal(); render(); alert('Imported'); } else alert('File format invalid'); }catch(e){ alert('Invalid JSON'); } };
+      reader.readAsText(f);
+    };
+    inp.click();
+  };
+
+  // load sample
+  function loadSample(){
+    state.schedules = [
+      { id:id(), name:'Morning — Shacharit', anchorMode:'backward', anchorTime:'08:00', defaultDuration:10, steps:[
+        {label:'Get out of bed', duration:10, startTime:'07:25'}, 
+        {label:'Yoghurt', duration:10, startTime:'07:35'}, 
+        {label:'Coffee', duration:20, startTime:'07:45'}, 
+        {label:'Get dressed', duration:25, startTime:'07:05'}, 
+        {label:'Travel', duration:20, startTime:'07:40'}
+      ]},
+      { id:id(), name:'Mincha Evening', anchorMode:'backward', anchorTime:'20:00', defaultDuration:10, steps:[
+        {label:'Pack sefer', duration:10, startTime:'19:35'},
+        {label:'Depart', duration:10, startTime:'19:45'},
+        {label:'Arrive and open sefer', duration:5, startTime:'19:55'}
+      ] }
+    ];
+    // Recompute times for sample data
+    state.schedules.forEach(schedule => computeInitialTimes(schedule));
+    state.selectedId = state.schedules[0].id;
+  }
+
+  // init
+  loadLocal(); if(state.schedules.length===0) loadSample(); render();
+
+})();
+</script>
+</body>
+</html>
+
