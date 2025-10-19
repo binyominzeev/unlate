@@ -509,6 +509,10 @@
         if(currentIdx > 0) {
           saveUndoState(); // Save state before change
           [sel.steps[currentIdx-1], sel.steps[currentIdx]] = [sel.steps[currentIdx], sel.steps[currentIdx-1]];
+          
+          // Recalculate start times after reordering
+          recalculateStartTimes(sel);
+          
           saveLocal();
           render();
         }
@@ -519,6 +523,10 @@
         if(currentIdx !== -1 && currentIdx < sel.steps.length - 1) {
           saveUndoState(); // Save state before change
           [sel.steps[currentIdx], sel.steps[currentIdx+1]] = [sel.steps[currentIdx+1], sel.steps[currentIdx]];
+          
+          // Recalculate start times after reordering
+          recalculateStartTimes(sel);
+          
           saveLocal();
           render();
         }
@@ -583,6 +591,33 @@
     return false;
   }
 
+    function recalculateStartTimes(schedule) {
+    // Only recalculate if we have steps and an anchor time
+    if(!schedule.steps.length || !schedule.anchorTime) return;
+    
+    const mode = schedule.anchorMode || 'forward';
+    const anchor = schedule.anchorTime;
+
+    if(mode === 'backward') {
+      // Start from end and work backwards
+      let currentEnd = toMinutes(anchor);
+      for(let i = schedule.steps.length - 1; i >= 0; i--) {
+        const duration = schedule.steps[i].duration || 0;
+        const startTime = currentEnd - duration;
+        schedule.steps[i].startTime = toTimeStr(startTime);
+        currentEnd = startTime;
+      }
+    } else {
+      // Start from beginning and work forwards (forward mode)
+      let currentStart = toMinutes(anchor);
+      for(let i = 0; i < schedule.steps.length; i++) {
+        schedule.steps[i].startTime = toTimeStr(currentStart);
+        const duration = schedule.steps[i].duration || 0;
+        currentStart += duration;
+      }
+    }
+  }
+  
   // Actions
   q('#undoBtn').onclick = () => {
     if(!undo()) {
