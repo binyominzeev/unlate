@@ -63,6 +63,7 @@
           </div>
           <div class="space-x-1">
             <button class="selectBtn px-2 py-1 bg-sky-500 text-white rounded text-sm">Select</button>
+            <button class="cloneBtn px-2 py-1 bg-green-500 text-white rounded text-sm">Clone</button>
             <button class="delBtn px-2 py-1 bg-red-500 text-white rounded text-sm">Delete</button>
           </div>
         </div>
@@ -256,8 +257,19 @@
       tpl.querySelector('.name').textContent = sch.name;
       tpl.querySelector('.meta').textContent = `steps: ${sch.steps.length} • anchor: ${sch.anchorMode||'forward'}`;
       const selectBtn = tpl.querySelector('.selectBtn');
+      const cloneBtn = tpl.querySelector('.cloneBtn');
       const delBtn = tpl.querySelector('.delBtn');
       selectBtn.onclick = ()=>{ state.selectedId = sch.id; renderSelected(); };
+      cloneBtn.onclick = ()=>{ 
+        saveUndoState(); // Save state before change
+        const cloned = JSON.parse(JSON.stringify(sch)); // Deep clone
+        cloned.id = id(); // New unique ID
+        cloned.name = sch.name + ' (Copy)'; // Add copy suffix
+        state.schedules.push(cloned);
+        state.selectedId = cloned.id; // Auto-select the cloned schedule
+        saveLocal(); 
+        render(); 
+      };
       delBtn.onclick = ()=>{ 
         if(confirm('Delete schedule?')){ 
           saveUndoState(); // Save state before change
