@@ -409,12 +409,16 @@
       // Event handlers - only trigger on blur or Enter key
       const handleStartTimeChange = () => {
         saveUndoState();
-        adjustScheduleFromStartTime(sel, idx, startTimeIn.value);
+        // Find current index dynamically instead of using closure idx
+        const currentIdx = sel.steps.findIndex(step => step === st);
+        if(currentIdx !== -1) {
+          adjustScheduleFromStartTime(sel, currentIdx, startTimeIn.value);
+        }
         saveLocal();
         renderSelected();
         setTimeout(() => {
           document.querySelectorAll('.startTime, .endTime').forEach((el, i) => {
-            if(i !== idx) blinkElement(el);
+            if(i !== currentIdx) blinkElement(el);
           });
         }, 10);
       };
@@ -422,26 +426,34 @@
       const handleDurationChange = () => {
         saveUndoState();
         const newDuration = Number(durIn.value || 0);
-        adjustScheduleFromDuration(sel, idx, newDuration);
+        // Find current index dynamically instead of using closure idx
+        const currentIdx = sel.steps.findIndex(step => step === st);
+        if(currentIdx !== -1) {
+          adjustScheduleFromDuration(sel, currentIdx, newDuration);
+        }
         saveLocal();
         renderSelected();
         setTimeout(() => {
           document.querySelectorAll('.startTime, .endTime').forEach((el, i) => {
-            if(i > idx) blinkElement(el);
+            if(i > currentIdx) blinkElement(el);
           });
-          const currentEndTime = document.querySelectorAll('.endTime')[idx];
+          const currentEndTime = document.querySelectorAll('.endTime')[currentIdx];
           if(currentEndTime) blinkElement(currentEndTime);
         }, 10);
       };
 
       const handleEndTimeChange = () => {
         saveUndoState();
-        adjustScheduleFromEndTime(sel, idx, endTimeIn.value);
+        // Find current index dynamically instead of using closure idx
+        const currentIdx = sel.steps.findIndex(step => step === st);
+        if(currentIdx !== -1) {
+          adjustScheduleFromEndTime(sel, currentIdx, endTimeIn.value);
+        }
         saveLocal();
         renderSelected();
         setTimeout(() => {
           document.querySelectorAll('.startTime, .endTime').forEach((el, i) => {
-            if(i > idx) blinkElement(el);
+            if(i > currentIdx) blinkElement(el);
           });
         }, 10);
       };
@@ -484,24 +496,29 @@
 
       tpl.querySelector('.delStepBtn').onclick = () => {
         saveUndoState(); // Save state before change
-        sel.steps.splice(idx, 1);
+        const currentIdx = sel.steps.findIndex(step => step === st);
+        if(currentIdx !== -1) {
+          sel.steps.splice(currentIdx, 1);
+        }
         saveLocal();
         render();
       };
 
       tpl.querySelector('.upBtn').onclick = () => {
-        if(idx > 0) {
+        const currentIdx = sel.steps.findIndex(step => step === st);
+        if(currentIdx > 0) {
           saveUndoState(); // Save state before change
-          [sel.steps[idx-1], sel.steps[idx]] = [sel.steps[idx], sel.steps[idx-1]];
+          [sel.steps[currentIdx-1], sel.steps[currentIdx]] = [sel.steps[currentIdx], sel.steps[currentIdx-1]];
           saveLocal();
           render();
         }
       };
 
       tpl.querySelector('.downBtn').onclick = () => {
-        if(idx < sel.steps.length - 1) {
+        const currentIdx = sel.steps.findIndex(step => step === st);
+        if(currentIdx !== -1 && currentIdx < sel.steps.length - 1) {
           saveUndoState(); // Save state before change
-          [sel.steps[idx], sel.steps[idx+1]] = [sel.steps[idx+1], sel.steps[idx]];
+          [sel.steps[currentIdx], sel.steps[currentIdx+1]] = [sel.steps[currentIdx+1], sel.steps[currentIdx]];
           saveLocal();
           render();
         }
