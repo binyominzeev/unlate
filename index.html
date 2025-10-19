@@ -78,8 +78,7 @@
         <input class="w-24 px-2 py-2 border rounded cell-editable duration text-center" type="number" />
         <input class="w-28 px-2 py-2 border rounded cell-editable time-input endTime text-center" type="time" />
         <div class="flex gap-2">
-          <button class="upBtn px-3 py-2 bg-slate-100 hover:bg-slate-200 border rounded">↑</button>
-          <button class="downBtn px-3 py-2 bg-slate-100 hover:bg-slate-200 border rounded">↓</button>
+          <button class="insertAfterBtn px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-600 rounded">+</button>
           <button class="delStepBtn px-3 py-2 bg-red-100 hover:bg-red-200 text-red-600 rounded">✕</button>
         </div>
       </div>
@@ -380,7 +379,7 @@
       <div class="flex-1 px-3">Activity</div>
       <div class="w-24 text-center">Duration (min)</div>
       <div class="w-28 text-center">End Time</div>
-      <div class="w-32 text-center">Actions</div>
+      <div class="w-24 text-center">Actions</div>
     `;
     card.appendChild(header);
 
@@ -407,9 +406,9 @@
       // Event handlers
       // Update the event handlers to save undo state before changes around line 330:
       // Event handlers - only trigger on blur or Enter key
+      // Event handlers - only trigger on blur or Enter key
       const handleStartTimeChange = () => {
         saveUndoState();
-        // Find current index dynamically instead of using closure idx
         const currentIdx = sel.steps.findIndex(step => step === st);
         if(currentIdx !== -1) {
           adjustScheduleFromStartTime(sel, currentIdx, startTimeIn.value);
@@ -426,7 +425,6 @@
       const handleDurationChange = () => {
         saveUndoState();
         const newDuration = Number(durIn.value || 0);
-        // Find current index dynamically instead of using closure idx
         const currentIdx = sel.steps.findIndex(step => step === st);
         if(currentIdx !== -1) {
           adjustScheduleFromDuration(sel, currentIdx, newDuration);
@@ -444,7 +442,6 @@
 
       const handleEndTimeChange = () => {
         saveUndoState();
-        // Find current index dynamically instead of using closure idx
         const currentIdx = sel.steps.findIndex(step => step === st);
         if(currentIdx !== -1) {
           adjustScheduleFromEndTime(sel, currentIdx, endTimeIn.value);
@@ -504,32 +501,33 @@
         render();
       };
 
-      tpl.querySelector('.upBtn').onclick = () => {
+      tpl.querySelector('.insertAfterBtn').onclick = () => {
+        saveUndoState(); // Save state before change
         const currentIdx = sel.steps.findIndex(step => step === st);
-        if(currentIdx > 0) {
-          saveUndoState(); // Save state before change
-          [sel.steps[currentIdx-1], sel.steps[currentIdx]] = [sel.steps[currentIdx], sel.steps[currentIdx-1]];
+        if(currentIdx !== -1) {
+          // Calculate start time for new activity (end time of current activity)
+          const currentStartMinutes = toMinutes(st.startTime || '00:00');
+          const currentDuration = st.duration || 0;
+          const newStartTime = toTimeStr(currentStartMinutes + currentDuration);
           
-          // Recalculate start times after reordering
-          recalculateStartTimes(sel);
+          // Create new activity
+          const newActivity = {
+            label: 'New activity',
+            duration: 10,
+            startTime: newStartTime
+          };
           
-          saveLocal();
-          render();
+          // Insert new activity after current one
+          sel.steps.splice(currentIdx + 1, 0, newActivity);
+          
+          // Push all activities after the new one by 10 minutes
+          for(let i = currentIdx + 2; i < sel.steps.length; i++) {
+            const currentStart = toMinutes(sel.steps[i].startTime || '00:00');
+            sel.steps[i].startTime = toTimeStr(currentStart + 10);
+          }
         }
-      };
-
-      tpl.querySelector('.downBtn').onclick = () => {
-        const currentIdx = sel.steps.findIndex(step => step === st);
-        if(currentIdx !== -1 && currentIdx < sel.steps.length - 1) {
-          saveUndoState(); // Save state before change
-          [sel.steps[currentIdx], sel.steps[currentIdx+1]] = [sel.steps[currentIdx+1], sel.steps[currentIdx]];
-          
-          // Recalculate start times after reordering
-          recalculateStartTimes(sel);
-          
-          saveLocal();
-          render();
-        }
+        saveLocal();
+        render();
       };
 
       stepsContainer.appendChild(tpl);
@@ -591,33 +589,6 @@
     return false;
   }
 
-    function recalculateStartTimes(schedule) {
-    // Only recalculate if we have steps and an anchor time
-    if(!schedule.steps.length || !schedule.anchorTime) return;
-    
-    const mode = schedule.anchorMode || 'forward';
-    const anchor = schedule.anchorTime;
-
-    if(mode === 'backward') {
-      // Start from end and work backwards
-      let currentEnd = toMinutes(anchor);
-      for(let i = schedule.steps.length - 1; i >= 0; i--) {
-        const duration = schedule.steps[i].duration || 0;
-        const startTime = currentEnd - duration;
-        schedule.steps[i].startTime = toTimeStr(startTime);
-        currentEnd = startTime;
-      }
-    } else {
-      // Start from beginning and work forwards (forward mode)
-      let currentStart = toMinutes(anchor);
-      for(let i = 0; i < schedule.steps.length; i++) {
-        schedule.steps[i].startTime = toTimeStr(currentStart);
-        const duration = schedule.steps[i].duration || 0;
-        currentStart += duration;
-      }
-    }
-  }
-  
   // Actions
   q('#undoBtn').onclick = () => {
     if(!undo()) {
